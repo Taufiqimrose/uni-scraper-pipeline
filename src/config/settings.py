@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     API_KEY: str
 
+    # --- Search ---
+    SERP_API_KEY: str = ""
+
     # --- Server ---
     ENVIRONMENT: str = "development"
     HOST: str = "0.0.0.0"

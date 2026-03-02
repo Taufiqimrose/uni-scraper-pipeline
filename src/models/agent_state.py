@@ -115,6 +115,7 @@ class AgentState(BaseModel):
     job_id: str
     seed_url: str
     university_name: str
+    target_major: str | None = None  # For targeted single-major scraping
     phase: AgentPhase = AgentPhase.INITIALIZING
 
     # Discovery results

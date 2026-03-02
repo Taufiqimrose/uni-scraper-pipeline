@@ -13,8 +13,17 @@ logger = structlog.get_logger()
 class JobManager:
     """Manages scrape job execution."""
 
-    async def process_job(self, job_id: str, request: ScrapeRequest) -> None:
-        """Process a single scrape job."""
+    async def process_job(
+        self, job_id: str, request: ScrapeRequest, resolved_url: str | None = None
+    ) -> None:
+        """Process a single scrape job.
+
+        Args:
+            job_id: UUID of the created scrape job.
+            request: Original request from the API.
+            resolved_url: Pre-resolved seed URL (used when search resolved the URL
+                          before job creation). Falls back to ``request.url``.
+        """
         settings = get_settings()
         pool = await get_pool()
 
@@ -22,6 +31,11 @@ class JobManager:
 
         browser = BrowserManager(pool_size=settings.BROWSER_POOL_SIZE)
         await browser.start()
+
+        seed_url = resolved_url or request.url
+        if not seed_url:
+            logger.error("job_missing_url", job_id=job_id)
+            raise ValueError("No seed URL available for scrape job")
 
         try:
             orchestrator = Orchestrator(
@@ -35,11 +49,33 @@ class JobManager:
                 page_timeout_ms=settings.PAGE_TIMEOUT_MS,
             )
 
-            await orchestrator.run(
-                job_id=job_id,
-                seed_url=request.url,
-                university_name=request.university_name,
-            )
+            # Route to targeted or full scrape based on request type
+            if request.major_name:
+                logger.info(
+                    "job_starting_targeted",
+                    job_id=job_id,
+                    university=request.university_name,
+                    major=request.major_name,
+                    seed_url=seed_url,
+                )
+                await orchestrator.run_targeted(
+                    job_id=job_id,
+                    seed_url=seed_url,
+                    university_name=request.university_name,
+                    major_name=request.major_name,
+                )
+            else:
+                logger.info(
+                    "job_starting_full",
+                    job_id=job_id,
+                    university=request.university_name,
+                    seed_url=seed_url,
+                )
+                await orchestrator.run(
+                    job_id=job_id,
+                    seed_url=seed_url,
+                    university_name=request.university_name,
+                )
 
         except Exception as e:
             logger.error("job_failed", job_id=job_id, error=str(e))

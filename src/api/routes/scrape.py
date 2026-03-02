@@ -1,15 +1,63 @@
 from typing import Annotated
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
+from src.config.settings import Settings, get_settings
 from src.db.repositories import ScrapeJobRepository
-from src.models import PaginatedResponse, ScrapeJob, ScrapeJobResponse, ScrapeRequest, ScrapeStatus
+from src.models import (
+    PaginatedResponse,
+    ScrapeJob,
+    ScrapeJobResponse,
+    ScrapeRequest,
+    ScrapeStatus,
+    SearchRequest,
+    SearchResultResponse,
+)
 from src.queue.job_manager import JobManager
+from src.search import SearchResolver, SerpClient
 
 from ..dependencies import get_scrape_job_repo, verify_api_key
 
+logger = structlog.get_logger()
+
 router = APIRouter(tags=["scraping"], dependencies=[Depends(verify_api_key)])
+
+
+@router.post("/search", response_model=SearchResultResponse)
+async def search_university(
+    request: SearchRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> SearchResultResponse:
+    """Resolve a university name (+ optional major) into catalog URLs.
+
+    This is a preview/lookup endpoint — it does NOT start a scrape job.
+    Use the returned URLs to verify before submitting to ``POST /scrape``.
+    """
+    from openai import AsyncOpenAI
+
+    if not settings.SERP_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Search is unavailable: SERP_API_KEY is not configured.",
+        )
+
+    serp = SerpClient(api_key=settings.SERP_API_KEY)
+    openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    resolver = SearchResolver(serp, openai_client, model=settings.OPENAI_MODEL)
+
+    try:
+        target = await resolver.resolve(request.university_name, request.major_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return SearchResultResponse(
+        catalog_url=target.catalog_url,
+        program_url=target.program_url,
+        university_name_normalized=target.university_name_normalized,
+        confidence=target.confidence,
+    )
 
 
 @router.post("/scrape", status_code=202, response_model=ScrapeJobResponse)
@@ -17,17 +65,61 @@ async def start_scrape(
     request: ScrapeRequest,
     background_tasks: BackgroundTasks,
     repo: Annotated[ScrapeJobRepository, Depends(get_scrape_job_repo)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ScrapeJobResponse:
-    """Submit a new scraping job for a university."""
+    """Submit a new scraping job for a university.
+
+    Two modes:
+
+    1. **Direct URL** — provide ``url`` and ``university_name``.
+    2. **Search-based** — provide ``university_name`` and ``major_name``.
+       The pipeline will use SerpAPI + GPT-4o to find the catalog URL
+       and scrape only the requested major.
+    """
+    seed_url = request.url
+    search_type = "direct_url"
+
+    # If no URL provided, resolve via search
+    if not seed_url:
+        if not settings.SERP_API_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail="Search is unavailable: SERP_API_KEY is not configured.",
+            )
+
+        from openai import AsyncOpenAI
+
+        serp = SerpClient(api_key=settings.SERP_API_KEY)
+        openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        resolver = SearchResolver(serp, openai_client, model=settings.OPENAI_MODEL)
+
+        try:
+            target = await resolver.resolve(request.university_name, request.major_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        seed_url = target.program_url or target.catalog_url
+        search_type = "search"
+
+        logger.info(
+            "search_resolved_for_scrape",
+            university=request.university_name,
+            major=request.major_name,
+            seed_url=seed_url,
+            confidence=target.confidence,
+        )
+
     job = ScrapeJob(
         university_name=request.university_name,
-        seed_url=request.url,
+        seed_url=seed_url,
+        major_name=request.major_name,
+        search_type=search_type,
     )
     job = await repo.create(job)
 
     # Enqueue the job for background processing
     job_manager = JobManager()
-    background_tasks.add_task(job_manager.process_job, str(job.id), request)
+    background_tasks.add_task(job_manager.process_job, str(job.id), request, seed_url)
 
     return ScrapeJobResponse(
         job_id=job.id,

@@ -20,6 +20,8 @@ from .api_schemas import (
     RequirementGroupResponse,
     ScrapeJobResponse,
     ScrapeRequest,
+    SearchRequest,
+    SearchResultResponse,
     UniversityQuery,
     UniversityResponse,
 )
@@ -68,6 +70,8 @@ __all__ = [
     "ScrapeJobResponse",
     "ScrapeRequest",
     "ScrapeStatus",
+    "SearchRequest",
+    "SearchResultResponse",
     "SiteType",
     "University",
     "UniversityQuery",

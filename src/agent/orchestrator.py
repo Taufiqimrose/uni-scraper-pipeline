@@ -26,6 +26,7 @@ from src.models import (
 from src.utils.url_utils import extract_domain, slugify
 
 from .extractor import ExtractorAgent
+from .finder import FinderAgent
 from .navigator import NavigatorAgent
 from .planner import PlannerAgent
 from .validator import ValidatorAgent
@@ -56,6 +57,7 @@ class Orchestrator:
         self._navigator = NavigatorAgent(openai_client, model)
         self._extractor = ExtractorAgent(openai_client, model)
         self._validator = ValidatorAgent(openai_client, model)
+        self._finder = FinderAgent(openai_client, model)
 
         # Browser tools
         self._rate_limiter = RateLimiter(rate_limit_delay)
@@ -115,6 +117,116 @@ class Orchestrator:
 
         except Exception as e:
             logger.error("pipeline_failed", job_id=job_id, error=str(e))
+            await self._update_job(
+                state, ScrapeStatus.FAILED, "Failed", error_message=str(e)
+            )
+            raise
+
+    async def run_targeted(
+        self, job_id: str, seed_url: str, university_name: str, major_name: str
+    ) -> None:
+        """Execute a targeted scraping pipeline for a single major at a university.
+
+        Instead of discovering all programs, this:
+        1. Fetches the catalog/seed page
+        2. Uses the Finder agent to locate the specific major's page
+        3. Extracts only that major's requirements
+        4. Validates and stores the result
+        """
+        state = AgentState(
+            job_id=job_id,
+            seed_url=seed_url,
+            university_name=university_name,
+            target_major=major_name,
+            token_budget=self._token_budget,
+        )
+
+        try:
+            await self._update_job(state, ScrapeStatus.RUNNING, "Initializing targeted scrape")
+
+            # Phase 1: Fetch the seed page
+            await self._update_job(state, ScrapeStatus.DISCOVERING, f"Finding {major_name}")
+            result = await self._fetch_page(state, seed_url)
+            if not result:
+                raise RuntimeError(f"Could not fetch catalog URL: {seed_url}")
+
+            # Phase 2: Find the target major's page using the Finder agent
+            program_url, alternatives, tokens = await self._finder.find_program(
+                result.cleaned_html, university_name, major_name, seed_url
+            )
+            state.total_tokens_used += tokens
+
+            # If not found on the seed page, try alternatives or use Navigator
+            target_page_url = program_url
+            if not target_page_url and alternatives:
+                target_page_url = alternatives[0]
+
+            if not target_page_url:
+                # Fallback: use planner + navigator to find it
+                state.log_decision(
+                    AgentPhase.DISCOVERING_PROGRAMS,
+                    "finder_fallback",
+                    f"Could not find '{major_name}' directly, falling back to full navigation",
+                )
+                await self._phase_planning(state)
+                await self._phase_discovery(state)
+
+                # Search discovered programs for our target
+                for prog in state.discovered_programs:
+                    if major_name.lower() in prog.name.lower():
+                        target_page_url = prog.url
+                        break
+
+                if not target_page_url:
+                    raise RuntimeError(
+                        f"Could not find program '{major_name}' at {university_name}. "
+                        f"Discovered {len(state.discovered_programs)} programs but none matched."
+                    )
+
+            # Phase 3: Extract the target major
+            await self._update_job(
+                state, ScrapeStatus.EXTRACTING, f"Extracting {major_name} requirements"
+            )
+            target_result = await self._fetch_page(state, target_page_url)
+            if not target_result:
+                raise RuntimeError(f"Could not fetch program page: {target_page_url}")
+
+            program_detail, tokens = await self._extractor.extract_program(
+                target_result.cleaned_html, university_name, target_page_url
+            )
+            state.total_tokens_used += tokens
+            state.extracted_programs.append(program_detail)
+
+            # Track courses from this program
+            for rg in program_detail.requirements:
+                for course in rg.courses:
+                    state.extracted_courses[course.code] = {
+                        "code": course.code,
+                        "title": course.title,
+                        "units": course.units,
+                    }
+                    if course.prerequisites:
+                        state.prerequisite_map[course.code] = course.prerequisites
+
+            # Phase 4: Validate
+            await self._phase_validation(state)
+
+            # Phase 5: Store
+            await self._phase_storage(state)
+
+            # Complete
+            await self._update_job(state, ScrapeStatus.COMPLETED, "Complete", progress=1.0)
+
+            logger.info(
+                "targeted_pipeline_complete",
+                job_id=job_id,
+                major=major_name,
+                courses=len(state.extracted_courses),
+                tokens_used=state.total_tokens_used,
+            )
+
+        except Exception as e:
+            logger.error("targeted_pipeline_failed", job_id=job_id, error=str(e))
             await self._update_job(
                 state, ScrapeStatus.FAILED, "Failed", error_message=str(e)
             )

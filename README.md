@@ -1,6 +1,6 @@
 # Uni Scraper Pipeline
 
-> AI-powered agentic scraping pipeline that extracts academic programs, courses, and degree requirements from **any** university website.
+> AI-powered agentic scraping pipeline that extracts academic programs, courses, and degree requirements from **any** university website — just type a university name and major.
 
 [![CI](https://github.com/YOUR_USERNAME/uni-scraper-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/uni-scraper-pipeline/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -10,15 +10,15 @@
 
 ## What It Does
 
-Submit any university catalog URL and the pipeline will:
+Type a university name and major — the pipeline handles the rest:
 
-1. **Analyze** the site structure using GPT-4o
-2. **Discover** all academic programs (majors, minors, certificates)
-3. **Extract** degree requirements, courses, prerequisites, and unit counts
-4. **Validate** data completeness and quality
-5. **Store** structured data in PostgreSQL (Supabase)
+1. **Search** — Finds the university's catalog URL via SerpAPI + GPT-4o
+2. **Find** — Locates the specific major's page on the catalog
+3. **Extract** — Pulls degree requirements, courses, prerequisites, and unit counts
+4. **Validate** — Checks data completeness and quality
+5. **Store** — Saves structured data in PostgreSQL (Supabase)
 
-All through an intelligent agent that adapts to different university website layouts.
+No URLs required. The intelligent agent adapts to any university website layout.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ All through an intelligent agent that adapts to different university website lay
                         |  (Schedia.AI)    |
                         +--------+---------+
                                  |
-                            REST API
+                     "MIT" + "Computer Science"
                                  |
 +--------------------------------v---------------------------------+
 |                    Uni Scraper Pipeline                           |
@@ -36,16 +36,19 @@ All through an intelligent agent that adapts to different university website lay
 |  +------------------+    +------------------------------------+  |
 |  |  FastAPI Server  |    |         Orchestrator               |  |
 |  |                  |    |   (Plan - Execute - Observe)       |  |
-|  |  POST /scrape    +--->+                                    |  |
-|  |  GET  /status    |    |  Planner -> Navigator -> Extractor |  |
-|  |  GET  /programs  |    |              |                     |  |
-|  +------------------+    |           Validator                |  |
-|                          +----+----------+----------+---------+  |
+|  |  POST /search    |    |                                    |  |
+|  |  POST /scrape    +--->+  Resolver -> Finder -> Extractor   |  |
+|  |  GET  /status    |    |              |                     |  |
+|  |  GET  /programs  |    |           Validator                |  |
+|  +------------------+    +----+----------+----------+---------+  |
 |                               |          |          |            |
-|                    +----------v--+ +-----v----+ +---v---------+  |
-|                    |  Playwright | | GPT-4o   | |  Supabase   |  |
-|                    |  (Browser)  | | (OpenAI) | | (PostgreSQL)|  |
-|                    +-------------+ +----------+ +-------------+  |
+|                 +----------+  |  +-------v--+ +-----v--------+  |
+|                 |  SerpAPI |--+  |  GPT-4o  | |   Supabase   |  |
+|                 +----------+  |  | (OpenAI) | | (PostgreSQL) |  |
+|                    +----------v--+----------+ +--------------+  |
+|                    |  Playwright |                               |
+|                    |  (Browser)  |                               |
+|                    +-------------+                               |
 +------------------------------------------------------------------+
 ```
 
@@ -57,6 +60,7 @@ All through an intelligent agent that adapts to different university website lay
 - [uv](https://docs.astral.sh/uv/) package manager
 - PostgreSQL (or Supabase account)
 - OpenAI API key
+- SerpAPI key ([get one here](https://serpapi.com/)) — required for search mode
 
 ### Setup
 
@@ -85,15 +89,49 @@ make serve
 
 ### Scrape a University
 
+**Search mode** (recommended) — just provide a name and major:
+
+```bash
+# Via API — search mode (no URL needed!)
+curl -X POST http://localhost:8000/api/v1/scrape \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"university_name": "MIT", "major_name": "Computer Science"}'
+```
+
+**Direct URL mode** — provide a catalog URL manually:
+
 ```bash
 # Via CLI
 make scrape URL=https://catalog.csus.edu NAME="Sacramento State"
 
-# Via API
+# Via API — direct URL mode
 curl -X POST http://localhost:8000/api/v1/scrape \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{"url": "https://catalog.csus.edu", "university_name": "Sacramento State"}'
+```
+
+### Preview Search Results
+
+Before scraping, you can preview what URLs the search resolves to:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/search \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"university_name": "UC Berkeley", "major_name": "Electrical Engineering"}'
+```
+
+Returns:
+
+```json
+{
+  "catalog_url": "https://guide.berkeley.edu/...",
+  "program_url": "https://guide.berkeley.edu/.../electrical-engineering/",
+  "university_name_normalized": "University of California, Berkeley",
+  "confidence": 0.95
+}
 ```
 
 ### Docker
@@ -106,10 +144,12 @@ docker compose up
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/scrape` | Start a new scraping job |
+| `POST` | `/api/v1/search` | Resolve university name → catalog URL (preview) |
+| `POST` | `/api/v1/scrape` | Start a scraping job (search-based or direct URL) |
 | `GET` | `/api/v1/scrape/{job_id}` | Get job status and progress |
 | `GET` | `/api/v1/scrape/{job_id}/log` | Get agent decision log |
 | `DELETE` | `/api/v1/scrape/{job_id}` | Cancel a running job |
+| `GET` | `/api/v1/scrape` | List all scrape jobs |
 | `GET` | `/api/v1/universities` | List scraped universities |
 | `GET` | `/api/v1/universities/{id}` | Get university details |
 | `GET` | `/api/v1/universities/{id}/programs` | List programs |
@@ -124,6 +164,26 @@ Full OpenAPI docs available at `/docs` when the server is running.
 
 The pipeline uses a **Plan-Execute-Observe** loop powered by GPT-4o:
 
+**Search-based mode** (user provides name + major):
+
+```
+Phase 0: RESOLVER (SerpAPI + GPT-4o)
+  Input:  "MIT" + "Computer Science"
+  Output: Catalog URL + program URL with confidence score
+
+Phase 1: FINDER (GPT-4o)
+  Input:  Catalog page HTML + target major name
+  Output: URL of the specific major's page
+
+Phase 2: EXTRACTOR
+  Input:  Major's program page
+  Output: ProgramDetail (requirements, courses, prerequisites)
+
+Phase 3: VALIDATOR → Phase 4: STORER
+```
+
+**Direct URL mode** (user provides catalog URL):
+
 ```
 Phase 1: PLANNER
   Input:  Seed URL HTML
@@ -137,17 +197,13 @@ Phase 3: EXTRACTOR
   Input:  Each program detail page
   Output: ProgramDetail (requirements, courses, prerequisites)
 
-Phase 4: VALIDATOR
-  Input:  All extracted data
-  Output: ValidationReport (completeness score, issues, recommendations)
-
-Phase 5: STORER
-  Input:  Validated data
-  Output: Records in PostgreSQL
+Phase 4: VALIDATOR → Phase 5: STORER
 ```
 
 Each phase uses GPT-4o with structured JSON output and Pydantic validation. The agent handles:
 
+- **Automatic URL discovery** from just a university name (via SerpAPI)
+- Targeted single-major scraping or full catalog scraping
 - Pagination and multi-page navigation
 - JavaScript-rendered pages (via Playwright)
 - robots.txt compliance and rate limiting
@@ -160,8 +216,9 @@ Each phase uses GPT-4o with structured JSON output and Pydantic validation. The 
 ```
 src/
   api/          # FastAPI server, routes, middleware
-  agent/        # AI agents (planner, navigator, extractor, validator)
+  agent/        # AI agents (planner, navigator, extractor, validator, finder)
     prompts/    # GPT-4o prompt templates
+  search/       # SerpAPI client + GPT-4o URL resolver
   browser/      # Playwright browser pool, page fetcher, HTML cleaner
   models/       # Pydantic models (domain, API schemas, agent state)
   db/           # Database connection, repositories, migrations
@@ -219,6 +276,7 @@ make check
 | Language | Python 3.12+ |
 | API Framework | FastAPI |
 | AI Model | OpenAI GPT-4o |
+| Web Search | SerpAPI (Google Search) |
 | Browser Automation | Playwright |
 | Database | PostgreSQL (Supabase) |
 | DB Driver | asyncpg |
@@ -240,6 +298,7 @@ All configuration is via environment variables (see `.env.example`):
 | `OPENAI_API_KEY` | Yes | - | OpenAI API key |
 | `DATABASE_URL` | Yes | - | PostgreSQL connection string |
 | `API_KEY` | Yes | - | API key for authentication |
+| `SERP_API_KEY` | For search | - | SerpAPI key for URL discovery |
 | `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model to use |
 | `TOKEN_BUDGET` | No | `2000000` | Max tokens per scrape job |
 | `BROWSER_POOL_SIZE` | No | `3` | Concurrent browser contexts |

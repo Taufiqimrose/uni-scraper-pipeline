@@ -88,6 +88,8 @@ class ScrapeJob(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     university_name: str
     seed_url: str
+    major_name: str | None = None
+    search_type: str = "direct_url"  # "direct_url" | "search"
     status: ScrapeStatus = ScrapeStatus.QUEUED
     progress: float = 0.0
     current_step: str | None = None

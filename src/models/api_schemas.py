@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from .enums import DegreeType, ScrapeStatus
 
@@ -9,10 +9,36 @@ from .enums import DegreeType, ScrapeStatus
 
 
 class ScrapeRequest(BaseModel):
-    url: str
+    url: str | None = None
     university_name: str
+    major_name: str | None = None
     force_rescrape: bool = False
     catalog_year: str | None = None
+
+    @model_validator(mode="after")
+    def validate_request_type(self) -> "ScrapeRequest":
+        """Require either a URL or a major_name for targeted search."""
+        if not self.url and not self.major_name:
+            raise ValueError(
+                "Provide either 'url' for direct scraping or 'major_name' for search-based scraping"
+            )
+        return self
+
+
+class SearchRequest(BaseModel):
+    """Request to resolve a university + major into catalog URLs (preview, no scraping)."""
+
+    university_name: str
+    major_name: str | None = None
+
+
+class SearchResultResponse(BaseModel):
+    """Response from the search/resolve endpoint."""
+
+    catalog_url: str
+    program_url: str | None
+    university_name_normalized: str
+    confidence: float
 
 
 class UniversityQuery(BaseModel):

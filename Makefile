@@ -35,6 +35,9 @@ serve: ## Start the FastAPI development server
 scrape: ## Run a single scrape (usage: make scrape URL=https://catalog.csus.edu NAME="Sacramento State")
 	uv run python scripts/run_single_scrape.py --url $(URL) --name "$(NAME)"
 
+scrape-major: ## Search + scrape a specific major (usage: make scrape-major NAME="MIT" MAJOR="Computer Science")
+	uv run python scripts/run_single_scrape.py --name "$(NAME)" --major "$(MAJOR)"
+
 clean: ## Remove build artifacts and caches
 	rm -rf __pycache__ .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
