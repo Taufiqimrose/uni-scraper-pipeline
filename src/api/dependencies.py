@@ -1,7 +1,8 @@
 from typing import Annotated
 
 import asyncpg
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException, Security
+from fastapi.security import APIKeyHeader
 
 from src.config.settings import Settings, get_settings
 from src.db.connection import get_pool
@@ -11,6 +12,9 @@ from src.db.repositories import (
     ScrapeJobRepository,
     UniversityRepository,
 )
+
+# OpenAPI security scheme — adds "Authorize" button to Swagger UI
+_api_key_header = APIKeyHeader(name="X-API-Key")
 
 
 async def get_db_pool() -> asyncpg.Pool:
@@ -35,10 +39,10 @@ def get_scrape_job_repo(pool: Annotated[asyncpg.Pool, Depends(get_db_pool)]) -> 
 
 
 async def verify_api_key(
-    x_api_key: Annotated[str, Header()],
+    api_key: Annotated[str, Security(_api_key_header)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> str:
-    """Verify the API key from the request header."""
-    if x_api_key != settings.API_KEY:
+    """Verify the API key from the X-API-Key header."""
+    if api_key != settings.API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    return x_api_key
+    return api_key

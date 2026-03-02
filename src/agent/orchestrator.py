@@ -44,6 +44,7 @@ class Orchestrator:
         browser_manager: BrowserManager,
         model: str = "gpt-4o",
         token_budget: int = 2_000_000,
+        max_content_tokens: int = 100_000,
         rate_limit_delay: float = 2.0,
         cache_ttl_hours: int = 24,
         page_timeout_ms: int = 30_000,
@@ -55,7 +56,7 @@ class Orchestrator:
         # Agents
         self._planner = PlannerAgent(openai_client, model)
         self._navigator = NavigatorAgent(openai_client, model)
-        self._extractor = ExtractorAgent(openai_client, model)
+        self._extractor = ExtractorAgent(openai_client, model, max_content_tokens=max_content_tokens)
         self._validator = ValidatorAgent(openai_client, model)
         self._finder = FinderAgent(openai_client, model)
 
@@ -506,11 +507,13 @@ class Orchestrator:
         progress: float | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Update the scrape job in the database."""
+        """Update the scrape job in the database and append a log entry."""
         from uuid import UUID
 
+        job_uuid = UUID(state.job_id)
+
         await self._job_repo.update_status(
-            UUID(state.job_id),
+            job_uuid,
             status,
             current_step=step,
             programs_found=programs_found or len(state.discovered_programs),
@@ -521,3 +524,16 @@ class Orchestrator:
             total_tokens_used=state.total_tokens_used,
             total_pages_fetched=state.total_pages_fetched,
         )
+
+        # Persist a structured log entry for pipeline visibility
+        await self._job_repo.append_log(job_uuid, {
+            "phase": step,
+            "status": status.value,
+            "timestamp": datetime.utcnow().isoformat(),
+            "tokens_used": state.total_tokens_used,
+            "pages_fetched": state.total_pages_fetched,
+            "programs_found": len(state.discovered_programs),
+            "programs_scraped": len(state.extracted_programs),
+            "courses_found": len(state.extracted_courses),
+            "message": error_message or f"Entered: {step}",
+        })

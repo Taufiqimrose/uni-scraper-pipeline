@@ -44,6 +44,7 @@ class JobManager:
                 browser_manager=browser,
                 model=settings.OPENAI_MODEL,
                 token_budget=settings.TOKEN_BUDGET,
+                max_content_tokens=settings.get_max_content_tokens(),
                 rate_limit_delay=settings.RATE_LIMIT_DELAY,
                 cache_ttl_hours=settings.CACHE_TTL_HOURS,
                 page_timeout_ms=settings.PAGE_TIMEOUT_MS,

@@ -125,6 +125,31 @@ class CourseDetailResponse(BaseModel):
     programs: list[str]
 
 
+class PipelineStep(BaseModel):
+    """A single step in the scraping pipeline."""
+
+    name: str
+    status: str  # "completed" | "running" | "pending" | "failed" | "skipped"
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_seconds: float | None = None
+    detail: str | None = None
+
+
+class PipelineStatusResponse(BaseModel):
+    """Structured pipeline view of a scrape job — shows each step with timing and metrics."""
+
+    job_id: UUID
+    university_name: str
+    major_name: str | None = None
+    overall_status: ScrapeStatus
+    progress: float
+    steps: list[PipelineStep]
+    metrics: dict  # type: ignore[type-arg]
+    started_at: str | None = None
+    elapsed_seconds: float | None = None
+
+
 class PaginatedResponse(BaseModel):
     items: list  # type: ignore[type-arg]
     total: int

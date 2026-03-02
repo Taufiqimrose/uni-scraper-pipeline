@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format typecheck serve clean
+.PHONY: help install dev test lint format typecheck serve clean watch
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -37,6 +37,9 @@ scrape: ## Run a single scrape (usage: make scrape URL=https://catalog.csus.edu 
 
 scrape-major: ## Search + scrape a specific major (usage: make scrape-major NAME="MIT" MAJOR="Computer Science")
 	uv run python scripts/run_single_scrape.py --name "$(NAME)" --major "$(MAJOR)"
+
+watch: ## Watch a running scrape job (usage: make watch JOB=<job-id>)
+	uv run python scripts/pipeline_watch.py $(JOB)
 
 clean: ## Remove build artifacts and caches
 	rm -rf __pycache__ .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage

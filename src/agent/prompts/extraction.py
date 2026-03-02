@@ -45,6 +45,7 @@ For this program, extract:
 
 Rules:
 - Course codes should be in the format "DEPT NUM" (e.g., "CSC 130", "MATH 26A")
+- Use null for units only when the page does not specify unit count; otherwise use the integer value
 - If a group says "choose 3 from the following", mark those courses as is_required: false
 - If courses are listed as alternatives (e.g., "CSC 130 or CSC 135"), put the alternative in the alternatives field
 - Only extract data that is explicitly on the page - do not guess or infer

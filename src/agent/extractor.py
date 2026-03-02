@@ -1,9 +1,11 @@
+import asyncio
 import json
 
 import structlog
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from src.models import ProgramDetail
+from src.utils.retry import parse_openai_retry_after
 from src.utils.token_counter import count_tokens, truncate_to_tokens
 
 from .prompts.extraction import EXTRACTION_PROMPT, EXTRACTION_RETRY_PROMPT
@@ -11,16 +13,18 @@ from .prompts.system import AGENT_IDENTITY, JSON_INSTRUCTIONS
 
 logger = structlog.get_logger()
 
-# Reserve tokens for system prompt + response
-MAX_CONTENT_TOKENS = 100_000
-
-
 class ExtractorAgent:
     """Extracts structured program data from HTML pages."""
 
-    def __init__(self, client: AsyncOpenAI, model: str = "gpt-4o") -> None:
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: str = "gpt-4o",
+        max_content_tokens: int = 100_000,
+    ) -> None:
         self._client = client
         self._model = model
+        self._max_content_tokens = max_content_tokens
 
     async def extract_program(
         self, page_content: str, university_name: str, program_url: str
@@ -31,15 +35,15 @@ class ExtractorAgent:
             Tuple of (ProgramDetail, tokens_used)
         """
         # Truncate content if too large for the context window
-        content_tokens = count_tokens(page_content)
-        if content_tokens > MAX_CONTENT_TOKENS:
+        content_tokens = count_tokens(page_content, self._model)
+        if content_tokens > self._max_content_tokens:
             logger.warning(
                 "content_truncated",
                 url=program_url,
                 original_tokens=content_tokens,
-                max_tokens=MAX_CONTENT_TOKENS,
+                max_tokens=self._max_content_tokens,
             )
-            page_content = truncate_to_tokens(page_content, MAX_CONTENT_TOKENS)
+            page_content = truncate_to_tokens(page_content, self._max_content_tokens, self._model)
 
         prompt = EXTRACTION_PROMPT.format(
             university_name=university_name,
@@ -49,7 +53,7 @@ class ExtractorAgent:
 
         total_tokens_used = 0
 
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 response = await self._client.chat.completions.create(
                     model=self._model,
@@ -79,6 +83,21 @@ class ExtractorAgent:
                 )
                 return program, total_tokens_used
 
+            except RateLimitError as e:
+                wait_sec = parse_openai_retry_after(e) or min(90, max(20, attempt * 25))
+                wait_sec = min(120, max(5, wait_sec))  # clamp 5–120s
+                logger.warning(
+                    "extractor_rate_limited",
+                    attempt=attempt + 1,
+                    url=program_url,
+                    wait_sec=wait_sec,
+                    error=str(e),
+                )
+                if attempt < 4:
+                    await asyncio.sleep(wait_sec)
+                else:
+                    raise
+
             except (json.JSONDecodeError, ValueError) as e:
                 logger.warning(
                     "extractor_parse_error",
@@ -93,4 +112,4 @@ class ExtractorAgent:
                 else:
                     raise
 
-        raise RuntimeError(f"Extraction failed after 3 attempts for {program_url}")
+        raise RuntimeError(f"Extraction failed after 5 attempts for {program_url}")

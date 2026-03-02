@@ -19,13 +19,18 @@ class ScrapeJobRepository:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO scrape_jobs (id, university_name, seed_url, status, progress, current_step)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO scrape_jobs (
+                    id, university_name, seed_url, major_name, search_type,
+                    status, progress, current_step
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING *
                 """,
                 job.id,
                 job.university_name,
                 job.seed_url,
+                job.major_name,
+                job.search_type,
                 job.status.value,
                 job.progress,
                 job.current_step,

@@ -1,8 +1,10 @@
+import asyncio
 import json
 
 import structlog
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
+from src.utils.retry import parse_openai_retry_after
 from src.utils.token_counter import count_tokens
 
 from .prompts.search import FIND_PROGRAM_PROMPT
@@ -52,7 +54,7 @@ class FinderAgent:
             input_tokens=input_tokens,
         )
 
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 response = await self._client.chat.completions.create(
                     model=self._model,
@@ -83,6 +85,20 @@ class FinderAgent:
                 )
 
                 return program_url, alternatives, total_tokens
+
+            except RateLimitError as e:
+                wait_sec = parse_openai_retry_after(e) or min(90, max(20, attempt * 25))
+                wait_sec = min(120, max(5, wait_sec))  # clamp 5–120s
+                logger.warning(
+                    "finder_rate_limited",
+                    attempt=attempt + 1,
+                    wait_sec=wait_sec,
+                    error=str(e),
+                )
+                if attempt < 4:
+                    await asyncio.sleep(wait_sec)
+                else:
+                    raise
 
             except (json.JSONDecodeError, ValueError) as e:
                 logger.warning("finder_parse_error", attempt=attempt + 1, error=str(e))

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .enums import AgentPhase, DegreeType, SiteType
 
@@ -34,12 +34,24 @@ class CourseInfo(BaseModel):
 
     code: str
     title: str
-    units: int
+    units: int = 0  # LLM may return null when not on page; coerced to 0
     is_required: bool = True
     prerequisites: list[str] = Field(default_factory=list)
     corequisites: list[str] = Field(default_factory=list)
     alternatives: list[str] = Field(default_factory=list)
     notes: str | None = None
+
+    @field_validator("units", mode="before")
+    @classmethod
+    def coerce_units(cls, v: object) -> int:
+        """Coerce None or missing units to 0 for DB compatibility."""
+        if v is None:
+            return 0
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v)
+        return 0
 
 
 class ExtractedRequirementGroup(BaseModel):

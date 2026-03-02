@@ -57,13 +57,17 @@ class PageFetcher:
 
         page = await context.new_page()
         try:
-            response = await page.goto(url, wait_until="networkidle", timeout=self._timeout_ms)
+            # Use "load" instead of "networkidle" - many catalog sites have persistent
+            # connections (analytics, chat) that prevent networkidle from firing
+            response = await page.goto(url, wait_until="load", timeout=self._timeout_ms)
             status_code = response.status if response else 0
 
             # Wait for dynamic content to settle
             await page.wait_for_load_state("domcontentloaded")
 
             raw_html = await page.content()
+            if not raw_html:
+                raise ValueError("Page returned empty content")
             title = await page.title()
 
             cleaned_html = self._html_cleaner.clean(raw_html)

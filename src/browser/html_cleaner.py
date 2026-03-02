@@ -20,6 +20,8 @@ class HtmlCleaner:
 
     def clean(self, html: str) -> str:
         """Clean HTML: remove non-content elements, simplify structure."""
+        if not html or not isinstance(html, str):
+            return ""
         soup = BeautifulSoup(html, "lxml")
 
         # Remove comments
@@ -32,14 +34,22 @@ class HtmlCleaner:
                 tag.decompose()
 
         # Remove elements with navigation-related classes/IDs
-        for element in soup.find_all(True):
-            classes = " ".join(element.get("class", []))
-            element_id = element.get("id", "")
+        # Copy list to avoid mutation during iteration (decompose can affect tree)
+        for element in list(soup.find_all(True)):
+            if element is None or not hasattr(element, "get"):
+                continue
+            try:
+                classes = " ".join(element.get("class") or [])
+                element_id = element.get("id") or ""
+            except (AttributeError, TypeError):
+                continue
             if self.REMOVE_PATTERNS.search(classes) or self.REMOVE_PATTERNS.search(element_id):
                 element.decompose()
 
         # Remove empty elements
-        for element in soup.find_all(True):
+        for element in list(soup.find_all(True)):
+            if element is None or not hasattr(element, "get_text"):
+                continue
             if not element.get_text(strip=True) and not element.find_all(["img", "table"]):
                 element.decompose()
 

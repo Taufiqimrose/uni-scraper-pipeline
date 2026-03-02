@@ -92,6 +92,9 @@ make serve
 **Search mode** (recommended) — just provide a name and major:
 
 ```bash
+# Via CLI
+make scrape-major NAME="Sacramento State" MAJOR="Computer Science"
+
 # Via API — search mode (no URL needed!)
 curl -X POST http://localhost:8000/api/v1/scrape \
   -H "Content-Type: application/json" \
@@ -200,16 +203,17 @@ Phase 3: EXTRACTOR
 Phase 4: VALIDATOR → Phase 5: STORER
 ```
 
-Each phase uses GPT-4o with structured JSON output and Pydantic validation. The agent handles:
+Each phase uses the configured OpenAI model with structured JSON output and Pydantic validation. The agent handles:
 
 - **Automatic URL discovery** from just a university name (via SerpAPI)
 - Targeted single-major scraping or full catalog scraping
 - Pagination and multi-page navigation
 - JavaScript-rendered pages (via Playwright)
-- robots.txt compliance and rate limiting
-- Automatic retries with exponential backoff
+- robots.txt compliance and domain rate limiting
+- **OpenAI rate limit retry** — parses "try again in Xs" from 429 errors and waits before retrying (up to 5 attempts)
 - Token budget tracking to control costs
 - Graceful degradation (partial results on failure)
+- **Flexible model selection** — use gpt-4o (128k context), gpt-5.2 (400k context), or others via `OPENAI_MODEL`
 
 ## Project Structure
 
@@ -275,7 +279,7 @@ make check
 |-----------|-----------|
 | Language | Python 3.12+ |
 | API Framework | FastAPI |
-| AI Model | OpenAI GPT-4o |
+| AI Model | OpenAI (GPT-4o, GPT-4.1, GPT-5.x configurable) |
 | Web Search | SerpAPI (Google Search) |
 | Browser Automation | Playwright |
 | Database | PostgreSQL (Supabase) |
@@ -289,6 +293,13 @@ make check
 | Type Checker | mypy |
 | CI/CD | GitHub Actions |
 
+## Recent Updates
+
+- **Model flexibility** — Use `OPENAI_MODEL` to switch between gpt-4o (128k), gpt-4.1, or gpt-5.2 (400k context), reducing truncation on large catalog pages.
+- **Rate limit handling** — Extractor and Finder automatically retry on OpenAI 429 errors, parsing the suggested wait time from the error message.
+- **Robust extraction** — Course `units` field accepts `null` when not specified on the page (coerced to 0 for storage).
+- **Page fetch reliability** — Uses `load` instead of `networkidle` for Playwright; HTML cleaner handles edge cases from malformed catalog pages.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`):
@@ -299,7 +310,8 @@ All configuration is via environment variables (see `.env.example`):
 | `DATABASE_URL` | Yes | - | PostgreSQL connection string |
 | `API_KEY` | Yes | - | API key for authentication |
 | `SERP_API_KEY` | For search | - | SerpAPI key for URL discovery |
-| `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model to use |
+| `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model. Use gpt-5.2 for 400k context (less truncation). |
+| `MAX_CONTENT_TOKENS` | No | auto | Max page content tokens. Auto-derived from model (gpt-4o ~100k, gpt-5.x ~350k). Override if needed. |
 | `TOKEN_BUDGET` | No | `2000000` | Max tokens per scrape job |
 | `BROWSER_POOL_SIZE` | No | `3` | Concurrent browser contexts |
 | `RATE_LIMIT_DELAY` | No | `2.0` | Seconds between requests to same domain |

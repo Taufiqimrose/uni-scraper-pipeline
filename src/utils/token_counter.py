@@ -1,25 +1,30 @@
 import tiktoken
 
 
-# Cache the encoding to avoid re-creating it
-_encoding: tiktoken.Encoding | None = None
+# Cache encodings by model
+_encodings: dict[str, tiktoken.Encoding] = {}
+_DEFAULT_MODEL = "gpt-4o"
 
 
-def _get_encoding() -> tiktoken.Encoding:
-    global _encoding
-    if _encoding is None:
-        _encoding = tiktoken.encoding_for_model("gpt-4o")
-    return _encoding
+def _get_encoding(model: str | None = None) -> tiktoken.Encoding:
+    """Get tiktoken encoding for a model. Falls back to cl100k_base for unknown models."""
+    key = model or _DEFAULT_MODEL
+    if key not in _encodings:
+        try:
+            _encodings[key] = tiktoken.encoding_for_model(key)
+        except KeyError:
+            _encodings[key] = tiktoken.get_encoding("cl100k_base")
+    return _encodings[key]
 
 
-def count_tokens(text: str) -> int:
-    """Count the number of tokens in a text string for GPT-4o."""
-    return len(_get_encoding().encode(text))
+def count_tokens(text: str, model: str | None = None) -> int:
+    """Count the number of tokens in a text string."""
+    return len(_get_encoding(model).encode(text))
 
 
-def truncate_to_tokens(text: str, max_tokens: int) -> str:
+def truncate_to_tokens(text: str, max_tokens: int, model: str | None = None) -> str:
     """Truncate text to a maximum number of tokens."""
-    encoding = _get_encoding()
+    encoding = _get_encoding(model)
     tokens = encoding.encode(text)
     if len(tokens) <= max_tokens:
         return text

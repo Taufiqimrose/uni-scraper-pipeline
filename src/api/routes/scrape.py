@@ -8,6 +8,7 @@ from src.config.settings import Settings, get_settings
 from src.db.repositories import ScrapeJobRepository
 from src.models import (
     PaginatedResponse,
+    PipelineStatusResponse,
     ScrapeJob,
     ScrapeJobResponse,
     ScrapeRequest,
@@ -165,6 +166,26 @@ async def get_scrape_log(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"agent_log": job.agent_log}
+
+
+@router.get("/scrape/{job_id}/pipeline", response_model=PipelineStatusResponse)
+async def get_pipeline_status(
+    job_id: UUID,
+    repo: Annotated[ScrapeJobRepository, Depends(get_scrape_job_repo)],
+) -> PipelineStatusResponse:
+    """Get a structured pipeline view of a scraping job.
+
+    Returns each pipeline step with its status (completed/running/pending/failed),
+    timing information, and human-readable detail messages. Ideal for building
+    progress UIs or CLI dashboards.
+    """
+    job = await repo.get_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    from src.api.pipeline_view import build_pipeline_view
+
+    return build_pipeline_view(job)
 
 
 @router.delete("/scrape/{job_id}", status_code=204)
